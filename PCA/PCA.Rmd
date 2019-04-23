@@ -1,0 +1,345 @@
+---
+title: "STOR 565 Spring 2019 Homework 4"
+author: "Coleman Breen"
+output:
+  pdf_document: default
+  html_document: default
+subtitle: \textbf{Due on 02/28/2019 in Class}
+header-includes: \usepackage{amsgen,amsmath,amstext,amsbsy,amsopn,amssymb,mathabx,amsthm,bm,bbm}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if(!require(ISLR)) { install.packages("ISLR", repos = "http://cran.us.r-project.org"); library(ISLR) }
+if(!require(leaps)) { install.packages("leaps", repos = "http://cran.us.r-project.org"); library(leaps) }
+if(!require(glmnet)) { install.packages("glmnet", repos = "http://cran.us.r-project.org"); library(glmnet) }
+if(!require(pls)) { install.packages("pls", repos = "http://cran.us.r-project.org"); library(pls) }
+```
+\theoremstyle{definition}
+\newtheorem*{hint}{Hint}
+
+\theoremstyle{remark}
+\newtheorem*{rmk}{Remark}
+
+*Remark.* This homework aims to help you further understand the model selection techniques in linear model. Credits for **Theoretical Part** and **Computational Part** are in total 100 pt. For **Computational Part** , please complete your answer in the **RMarkdown** file and summit your printed PDF homework created by it.
+
+## Computational Part
+
+1.(*15 pt*) Consider the Nba data posted on the Sakai class site. Create a new data frame that contains the following columns:
+  
+  - team (check)
+	- wins (check)
+	- points (check)
+	- points3 (check)
+	- free$\_$throws (check)
+	- off$\_$rebounds (check)
+	- def$\_$rebounds (check)
+	- assists (check)
+	- steals (check)
+	- personal$\_$fouls (check)
+
+	
+(a) Create box plots of the quantitative features (i.e. all but) teams to see if you should scale the data when performing PCA. Describe your findings in words.
+
+```{r nba_boxplots, warning=FALSE}
+library(tidyverse, quietly = TRUE)
+
+nba.data <- read.csv("nba-teams-2017.csv")
+nba.data2 <- nba.data %>%
+  select(team, wins, points, points, points3,
+         free_throws, off_rebounds, def_rebounds,
+         assists, steals, personal_fouls)
+
+ggplot(stack(nba.data2), aes(x = ind, y = values)) +
+  geom_boxplot() +
+  ggtitle("Boxplots of quantitative NBA variables") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  xlab("variables")
+```
+
+The scales are radically different. For example, the median points is about 105 while the median steals is less than 10.  I will standardize the quantitative variables.
+
+(b) Obtain PC loadings of the first four princple components (PCs). **Display only the first few elements of each!**
+
+```{r principal_comp}
+#--> Compute principle components; standardize
+pr.out <- prcomp(nba.data2[,-1], scale=TRUE)
+
+#--> Look at the loadings
+head(pr.out$rotation[,1:4], 5)
+```
+
+I've only shown the first four (of nine) loadings above. Additionally, I've only shown the first few elements of each (as requested).
+
+(c) Plot a scree plot describing the amount explained by the various PCs.
+
+```{r nba_scree_plot}
+#--> Scree
+pr.var <- pr.out$sdev^2 # convert to variance
+pve = pr.var/ sum(pr.var) # what's the total variance
+
+plot(pve, main="Scree plot for NBA data",xlab = "Principal component", 
+     ylab = "Proportion of variance explained", 
+     ylim =c(0,.5), type ='b')
+```
+
+(d) Make another plot showing the cumulative percent of the variance explained. Precisely: for each $1\leq k \leq 10$ you are plotting 
+		\[\frac{\sum_{j=1}^k d_{j}^2}{\sum_{j=1}^{10} d_j^2}\]
+		
+```{r nba_scree2}
+plot(cumsum(pve), main="Cumulative scree plot of NBA data",
+     xlab = "Principal component", 
+     ylab = "Proportion of var. explained (cumulative)", 
+     ylim =c(0,1), type='b')
+```
+
+(e) If you were to retain all PCs which explain at least 90\% of the variance, how many PCs would you retain?
+
+```{r nba_90_percent}
+cdf <- cumsum(pve)
+sum(cdf < .90) + 1 # all the components that don't get us there plus the one that does
+```
+
+We need to include 6 PCs to account for at least 90\% of the variance.
+
+(f) Plot PC1 vs PC2 with the team names and describe your findings. 
+
+```{r nba_pc1_vs_pc2}
+#--> Get a dataframe (c/o Dr. Bhamidi's lecture)
+pca_scores <- pr.out$x
+low_dim_rep <- pca_scores%>%
+  data.frame() %>%
+  mutate(team = nba.data$team) %>%
+  select(team, everything())
+  
+#--> Plot (c/o Dr. Bhamidi's lecture)
+ggplot(low_dim_rep,aes(x = PC1, y = PC2))+
+  geom_vline(xintercept = 0)+geom_hline(yintercept = 0)+
+  geom_text(aes(label = team), size = 2)+
+  scale_x_continuous(breaks =-10:10)+
+  coord_cartesian(xlim =c(-8, 4))+
+  theme_light()
+```
+
+Recall that PC1 contains mostly positive relationships between wins and other variables: points, points3, free_throws, def_rebounds, assists, and steals. Teams that are farther along in the negative PC1 direction (because wins and the other aformentioned variables are negative) do all of those things well--they rebound, assist, and score. This makes sense because Golden State and Houston are the standouts in this category. Both of these teams have been known in recent years to be offensive juggernauts.  
+
+A team that is far in the positive PC2 direction (corresponding to more wins) is expected to be strong at defensive rebounding and three point shooting. It makes sense that the Pelicans are in this category because they have/had Anthony Davis--known for his ability to grab boards. The loading for PC2 is more complicated because there are also inverse relationships between wins and points, free_throws, and off_rebounds.
+
+All things considered, the first two principal components do a reaonable job "seperating" teams based on their reputation and play style. However, we need to incorporate more principle components to develop an even finer method to accurately characterize our teams and reduce dimensionality without losing important information.
+
+	
+2. (*20 pt*). **Important:** Please see the "Principal_components.rmd" file under the R demonstration folder in Lecture 5 for Sakai to see the code for manipulating figures.  Using code like that demonstrated in class, download the .png file containing an image of a house posted to Redfin in the Data folder on Sakai. Note, you may have to download this first and then open it from your own computer. Set $X$ to be the pixel intensity associated with the **red color** in the image using code like that performed in class. See the *Value* section of `?readPNG` to remind yourself of the organization of the raster array output of that function.
+
+Answer the following questions:
+
+(a) What are the dimensions of $X$? Plot a histogram of the pixel intensities within the image.
+	
+```{r house_info}
+library(png)
+
+#--> Read it in
+house.rgb <- readPNG("Redfin_house.png")
+X <- house.rgb[, , 1]
+
+#--> Dimension
+dim(X)
+
+#--> Plot
+par(mfrow = c(2,2))
+hist(house.rgb[, , 1], main="Histogram of red pixel intensity", 
+           freq=FALSE, col="red")
+hist(house.rgb[, , 2], main="Histogram of green pixel intensity", 
+           freq=FALSE, col="green")
+hist(house.rgb[, , 3], main="Histogram of blue pixel intensity", 
+           freq=FALSE, col="blue")
+```
+$X$, the matrix of red intensities, is 505 by 798 pixels.
+
+(b) Plot the scree plots for this data, which illustrate the percentage variation explained against the number of principal components and the cumulative percentage variation explained against the number of principal components. How many PCs are needed to explain 90$\%$ of the 	total variation of $X$?
+
+```{r house_scree}
+#--> Compute pc
+pr.out <- prcomp(X, scale=TRUE) # scale=TRUE used in class
+
+pr.var <- pr.out$sdev^2 # compute variance
+pve <- pr.var/ sum(pr.var) # proportion of variance
+
+#--> Plot
+plot(pve, main="Scree plot for red intensitites",
+     xlab = "Principal component", 
+     ylab = "Proportion of variance explained")
+
+plot(cumsum(pve), main="Cumulative scree plot for red intensitites",
+     xlab = "Principal component", 
+     ylab = "Cumulative proportion of variance explained", 
+     ylim =c(0, 1), type = "b", xlim =c(1, 50))
+
+#--> How many do we need for 90%
+cdf <- cumsum(pve)
+sum(cdf < .90) + 1
+```
+See above for scree and cumulative scree plots. We need 24 principal components to account for at least 90\% of the variance.
+
+
+(c) For $d = 1, 5, 10, 15, 20, 30, 50, 100, 200$ project the image onto the first $d$ principal components and plot the resulting compressed image for each $d$. For each of the nine plots, include the cumulative percentage variation explained by the projection in the title of your plots. 
+
+```{r plot_houses}
+d <- c(1,5,10,15,20,30,50,100,200) # PCs we want
+pc.Image <- list() # initialize
+Image <- scale(X) # scale to red
+
+for (i in 1:length(d)){
+  #--> Grab the pcs we want
+  u.proj <- pr.out$rotation
+  u.proj[, -1*(1:d[i])] <- 0 # make all except (1:d[i]) zero
+  
+  #--> Projection
+  projection <- (Image%*%u.proj)%*%t(u.proj) # t is a function apparently
+  
+  #--> Draw the image, get values in [0,1]
+  scaled <- (projection - min(as.numeric(projection)))
+  scaled <- scaled / max(as.numeric(scaled))
+  pc.Image[[i]] <- as.raster(scaled)
+}
+
+#--> Loop thru and show the images
+library(grid)
+
+for (i in 1:length(pc.Image)){
+  plot.new()
+  (grid.raster(pc.Image[[i]]))
+  title(paste0(toString(d[i]), " pcs capture ~",
+    toString(round(cdf[d[i]], digits=5)*100), " % of variance"),
+    font.main=2)
+}
+```
+
+3. (Prediction, Textbook 6.9, *15 pt*) In this exercise, we will predict the number of applications received using the other variables in the `College` data set from `ISLR` package.
+
+(a) Randomly split the data set into two sets, a training and a test set, as evenly as possible. There is an odd number of observations, so make the test set larger.
+
+```{r college_split_data}
+data(College)
+boolean.v <- rep(c(TRUE,FALSE), ceiling(nrow(College)/2))
+boolean.v <- boolean.v[-1] # get it to the right size, drop the first T
+
+set.seed(919)
+shuffled <- sample(boolean.v)
+
+train <- College[shuffled, ]
+test <- College[!shuffled, ]
+```
+
+(b) Fit a linear model using least squares on the training set, and report the test error obtained.
+
+```{r college_lm}
+#--> Fit linear model
+college.lm <- lm(Apps~., data=train)
+lm.pred <- predict.lm(college.lm, newdata=select(test, -Apps))
+
+#--> RMSE
+lm.rmse <- sum((lm.pred - select(test, Apps))^2) / length(lm.pred)
+lm.rmse
+```
+
+The test error for the standard linear model is 1,637,287.  
+  
+(c) Fit a ridge regression model on the training set, with $\lambda$ chosen by 5-fold cross-validation. Report the test error obtained.
+
+```{r college_ridge}
+#--> Prepare data (put in matrix form)
+x.train <- data.matrix(train, rownames.force = FALSE)
+y.train <- train$Apps
+
+x.test <- data.matrix(test, rownames.force = FALSE)
+y.test <- test$Apps
+
+#--> Ridge cross validation
+cv.out <- cv.glmnet(x=x.train, y=y.train, alpha=0, nfolds=5)
+college.ridge <- glmnet(x=x.train, y=y.train, alpha=0, lambda=cv.out$lambda.min)
+
+#--> Fit actual model
+lambda <- college.ridge$lambda
+ridge.pred <- predict(college.ridge, s=lambda, newx=x.test)
+
+#--> Error
+ridge.rmse <- sum((ridge.pred - y.test)^2) / length(ridge.pred)
+ridge.rmse
+```
+    
+The test error for the ridge regression model is 551,185.1.
+
+(d) Fit a LASSO model on the training set, with $\lambda$ chosen by 5-fold cross-validation. Report the test error obtained, along with the number of non-zero coefficient estimates.
+
+```{r college_lasso}
+#--> Lasso cross validation
+cv.out <- cv.glmnet(x=x.train, y=y.train, alpha=1, nfolds=5) # 1 for lasso
+college.lasso <- glmnet(x=x.train, y=y.train, alpha=0, lambda=cv.out$lambda.min)
+
+#--> Fit actual model
+lambda <- college.lasso$lambda # to set s
+lasso.pred <- predict(college.lasso, s=lambda, newx=x.test)
+
+#--> Error
+lasso.rmse <- sum((lasso.pred - y.test)^2) / length(lasso.pred)
+lasso.rmse
+
+#--> Non-zero
+sum(!coef(college.lasso) == 0)
+```
+
+The test error for the LASSO model is 134,362.1. There are 19 non-zero coefficient estimates.
+
+(e) Fit a PCR model on the training set, with $M$ chosen by 5-fold cross-validation. Report the test error obtained, along with the value of $M$ selected by cross-validation.
+
+```{r college_pcr}
+#--> Fit PCR
+college.pcr <-pcr(Apps~., data = train, scale = TRUE, validation="CV")
+
+#--> Summary of fit
+summary(college.pcr)
+
+#--> How many components should we include?
+validationplot(college.pcr, val.type = "MSEP")
+num_comp <- college.pcr$ncomp
+
+#--> Make predictions
+pcr.pred <- predict(college.pcr, test, ncomp = num_comp)
+
+#--> Compute MSPE
+pcr.rmse <- mean((pcr.pred - y.test)^2)
+
+#--> Report
+num_comp
+pcr.rmse
+```
+
+Five-fold cross validation supports using `M` = 17. Because this is all of the variables, PCR is the same as linear regression. The test error for Principle Component Regression is 1,637,287 (the same as OLS linear regression). 
+
+(f) Comment on the results obtained. How accurately can we predict the number of college applications received? Is there much difference among the test errors resulting from these four approaches?
+
+```{r college_summary_analysis}
+#--> Make a data frame 
+comp <- data.frame(lm.rmse, ridge.rmse, lasso.rmse, pcr.rmse)
+comp
+
+#--> Put predictions in one data frame
+lasso.df <- data.frame(real.apps = y.test, lasso.predicted.apps = lasso.pred, 
+                       ridge.predicted.apps = ridge.pred, lm.pred)
+names(lasso.df) <- c("observed","lasso", "ridge", "lm_and_pcr")
+
+#--> Coerce data
+library(reshape2) 
+lasso.df2  <- melt(lasso.df,id.var=1)
+
+#--> Plot
+ggplot(lasso.df2, aes(x=observed, y=value, color=variable)) +
+  geom_point(alpha=.5) +
+  geom_line(aes(x=observed,y=observed),color="black") +
+  ggtitle("Comparison of models") +
+  theme_minimal() +
+  ylab("predicted")
+```
+There is a noticeable range in the prediction error committed by each of our four models. In order, LASSO performed the best (RMSE~130,000), followed by ridge (RMSE~550,000). The OLS standard linear model (RMSE~1,600,000) and principle component regression (RMSE~1,600,000) are tied for last because they are functionally the same since the pcr includes all 17 predictors.  
+
+Based on the above plot, if we stick with LASSO, we can predict the number of applications reasonably well.  Additionally, its root mean squared prediction error is an entire order of magnitude smaller than the other methods and is not an unreasonable model, so in a formal setting I would reccomend using the LASSO model for prediction. 
