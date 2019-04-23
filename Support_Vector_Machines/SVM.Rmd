@@ -1,0 +1,281 @@
+---
+title: "STOR 565 Spring 2018 Homework 6"
+author: "Coleman Breen"
+output:
+  pdf_document: default
+  html_document: default
+subtitle: \textbf{Due on 01/31/2018 in Class}
+header-includes: \usepackage{amsgen,amsmath,amstext,amsbsy,amsopn,amssymb,mathabx,amsthm,bm,bbm}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(MASS)
+library(tidyverse)
+library(e1071)  # For svm
+library(stringr)
+library(ggplot2)
+
+set.seed(1305)
+```
+
+*Remark.* Credits for **Theoretical Part** and **Computational Part** are in total 100 pt. For **Computational Part**, please complete your answer in the **RMarkdown** file and summit your printed PDF homework created by it.
+
+##Comment
+If dplyr and MASS are both loaded, you might need to specify `dplyr::select` to specify that you want the dplyr version of the `select` function.
+
+## Computational Part
+
+###About the data: Tree leaf images
+
+We will attempt to identify trees based on image data of their leaves. This is a tough problem, though apps such as iNaturalist now do a pretty good job identifying plants from images taken on your phone.
+
+The data set is from here: https://www.kaggle.com/c/leaf-classification/data
+
+Images have been pre-processed, so the dataset inlcudes vectors for margin, shape and texture attributes for each of almost 1000 images. We will focus on the shape attributes, which describe the contours of the leaf in the image.
+
+###A helpful demonstration for SVM
+
+http://uc-r.github.io/svm
+
+###Q1
+###(a) (3 points)
+
+Load the `leaf_train` dataset. 
+
+(i) Subset the columns to include only `id`, `species` and the `shape` variables, which is most easily done using the dplyr `select` function and the sub-function `contains`. There should be 66 variables in all.
+
+(ii) Then create a new variable `genus` by extracting the first part of the species name. You can use the following code, assuming your data objects are named in a compatible way. You will probably want to load the data with `stringsAsFactors` as false. 
+
+(iii) Lastly, convert the genus variable to a factor.
+
+```{r load_data, eval=TRUE}
+#--> Part i)
+leaf <- read.csv("leaf_train.csv", stringsAsFactors = FALSE)
+leaf <- select(leaf, contains("id"), contains("species"), contains("shape"))
+
+#--> Part ii)
+leaf$genus <- str_split(leaf$species, "_", simplify = TRUE)[, 1]
+
+#--> Part iii)
+leaf$genus <- as.factor(leaf$genus)
+```
+
+(iv) Display your resulting data frame and the result of `summary(leaf$genus)`, which should give the number of observations of each genus. **Display only the id, species and first two species variables in your output, and only five rows of the data, eg by using the head function.**
+
+```{r data_summary}
+#--> Part iv)
+summary(leaf$genus)
+head(leaf[,1:4], 5)
+```
+
+
+(v) Randomly split your data into test and training sets. About 35 percent of the data should be in the test set. Display a summary of genus labels in the training set.
+
+**Note: In the rare event that one class in the training data is not represented, you may reduce the test set percentage to 30 percent and resample.**
+
+```{r sample_data}
+#--> Part v)
+set.seed(919) # Petey Pablo
+n <- nrow(leaf)
+s <- floor(n * 0.65)
+rows <- 1:n
+
+#--> Sampling
+train_index <- sample(rows, s, replace = F)
+test_index <- rows[-train_index]
+length(unique(c(train_index, test_index))) # Gut check that all numbers are accounted for
+
+#--> Split the data and check that all classes are represented in train
+train <- leaf[train_index, ]
+test <- leaf[test_index, ]
+
+#--> Check
+length(unique(train$genus))
+length(unique(leaf$genus))
+
+```
+The 990 represents the number of unique integers contained in the union of the `train_index` and `test_index`. Because it is 990, each of our observations is in either the train or test set. The first 34 is the number of unique genera in the train set. The second 34 is the number of unique genera in the entire leaf dataset. Therefore, each of the genera has at least one observation in the train set.
+
+
+##(b) (2 points) 
+
+For the training data:
+
+(i) Make a scatter plot of `shape1` by `shape50`, with some form of genus label. `ggplot2` is probably the best package for this, though you do not need to make the plot fancier than required to display the information above.
+
+```{r scatter_shape1_by_shapeshape50}
+#--> Part i)
+train %>%
+  ggplot(aes(x=shape1, y=shape50, color=genus, shape=genus)) +
+  geom_point() +
+  scale_shape_manual(values = rep(1:6, 8)) +
+  theme_minimal() +
+  ggtitle("Scatterplot of shape1 by shape50")
+```
+
+(ii) Write two to three sentences discussing some possible implications of this plot for the SVM model.
+
+Recall that we are trying to classify our observations into one of 34 genera (isn't that an obnoxious plural). We can imagine a super simple SVM where we only consider `shape1` and `shape50`. Already, we can imagine a maximal margin classifier hyperplane that would split the Quercus (purple plus) samples from the Magnolias (blue triangle). However, with so many classes, and so many features, we can see it would be impossible to split the 34 genera by 33 hyperplanes in the `shape1` by `shape50` feature space. Therefore, we need to consider all of the shape features to create separating hyperplanes that will classify effectively.
+
+
+##(c) (15 points) 
+
+For the training data:
+
+(i) Write a function, or use an available one, to choose the cost parameter for the SVM model on this training data with **linear kernel.** Use **shape variables as predictors only, genus as response**. 
+
+Use **5-fold cross validation.** Use the array of costs provided in the code below.
+
+**If you use a built-in function, you must state specifically how the best parameter value is chosen, for example by giving the error function minimized. Simply stating `classification error` is insufficient and will receive no points. You must state what that means. ** If using your own function, you may use any error function you like that is justified for classification problems.
+
+See the demo linked above for help.
+
+**This might take some time to run. Do not knit your file at the last minute before the assignment is due.**
+
+
+```{r linear_cost_loop}
+#--> Given cost parameters to test
+cost_out <- seq(from = 0.1, to =5.1, by = 1)
+mis <- rep(NaN, length(cost_out))
+
+#--> Loop thru costs
+for (i in 1:length(cost_out)){
+  #--> Fit model with 5-fold cv
+  svm.model <- svm(formula=genus~., data=select(train, genus, contains("shape")), 
+                   kernel="linear", cost=cost_out[i], fold=5)
+  #--> What percent were misclassified
+  mis[i] <- (sum(svm.model$fitted != train$genus)) / (nrow(train))
+}
+
+```
+
+Using 5-fold cross validation to fit the model for each of the six cost values, I used the misclassification rate as the error to minimize. Specifically, I used the percentage of the fitted values that were not classified as their actual genera. We want this error to be as low as possible (see below for value and plot).
+
+(ii) Report the best value of cost chosen, and plot the errors by the cost values.
+
+```{r}
+#--> Plot the cost vs. misclassification rate
+temp <- as.data.frame(cbind(cost_out, mis))
+
+temp %>%
+  ggplot(aes(x=cost_out, y=mis)) +
+  geom_line() +
+  ylab("Percent of training observation misclassified") +
+  xlab("Cost parameter") +
+  ggtitle("Selecting the cost tuning parameter")
+```
+
+
+The best cost value is `5.1`. See above for the plot of the error metric over the cost parameters.
+
+(iii) Write two or three sentences discussing some basic implications of your answer in (ii), using the concepts from class. Lecture 7 will be helpful.
+
+The tuning parameter `c` is the "budget for training observations being on the wrong side." Based on our first plot, our observations are not easily separable by shape features. For example, Cornus and Tilia observations have near identical `shape1` and `shape50` values. Therefore, even in higher dimensions (dozens of shape features), our data are not cleanly separable. Having a higher `c` value allows us to embrace this messiness and create hyperplanes that will overall do a good job but perhaps miss a couple of anomolous points.
+
+
+##(d) (15 points) 
+
+(i) Run the SVM model on the **training data** with **linear kernel** and the cost determined in part (c). If you are unable to do part (c), use a cost of 1, the default. Report a summary of the fitted class label counts.
+
+```{r fit_linear}
+#--> (i) Fit model
+svm.model <- svm(formula=genus~., data=select(train, genus, contains("shape")),
+                 kernel="linear", cost=cost_out[length(cost_out)], fold=5)
+summary(svm.model$fitted)
+```
+
+
+(ii) Create a classification plot from the model, plotting the variables `shape50` by `shape1`. See `?plot.svm`. In your plot statement, use the argument `xlim = c(0, 0.0012), ylim = c(0, 0.0012)`.
+
+See the linked demo for an explanation of the plot. Write two sentences explaining what you see **using concepts and terminology from class.**
+
+```{r plot_linear}
+#--> (ii) Classification plot
+plot(svm.model, select(train, genus, contains("shape")),
+     shape50 ~ shape1, xlim = c(0, 0.0012), ylim = c(0, 0.0012))
+```
+
+This plot attempts to show separating boundaries projected onto the `shape1` by `shape50` space. We can see three shades of purple, each corresponding to different classes (genera). Because this is a projection, these are not necessarily "decision boundaries" but rather "decision gradients." For example, an observation falling into the bottom left corner would be more likely to be classified as Morus. There is no clear maximal margin classifier (hyperplane) that lies in this plane, so we don't get any straight lines.
+
+(iii) Predict outcomes based on your model in (i) for the test data. Display a confusion matrix and compute sensitivity, specificity statistics. You may use the function demonstrated in class.
+
+**Warning: the confusion matrix will be awkward to display. Don't worry about it so much. The sensitivity and specificity are good summaries.**
+
+```{r confusion_linear}
+#--> (iii) Confusion matrix
+pred <- predict(svm.model, newdata=test)
+# confusionMatrix(test$genus, pred) # confusion matrix not included because it is 34 by 34
+library(caret)
+confusion <- confusionMatrix(test$genus, pred)
+confusion
+```
+The above confusion matrix gives sensitivity and specificity. 
+
+##(e) (15 points) 
+This question will use a non-linear kernel for the SVM and compare results.
+
+(i) Modify your function in part (c) to find the optimal cost value for the SVM on the **training data** with **radial kernel** with gamma parameter 0.55. Use the same cost range. Report the optimal cost.
+
+```{r, eval = FALSE, echo=FALSE}
+# gamma fixed for simplicity, but this is how it was found.
+pram2 <- tune(svm, genus ~., data = select(train, genus, contains("shape")), kernel = "radial", 
+             ranges = list(cost = cost_out, gamma = seq(from = 0.05, to = 2, by = .5)), 
+             tunecontrol = tune.control(cross = 5))
+```
+
+```{r cot_parameter_radial}
+#--> Given cost parameters to test
+cost_out <- seq(from = 0.1, to =5.1, by = 1)
+mis.radial <- rep(NaN, length(cost_out))
+
+#--> Loop thru costs
+for (i in 1:length(cost_out)){
+  #--> Fit model with 5-fold cv
+  svm.model.radial <- svm(formula=genus~., data=select(train, genus, contains("shape")), 
+                   kernel="radial", cost=cost_out[i], fold=5, gamma=0.55)
+  #--> What percent were misclassified
+  mis.radial[i] <- (sum(svm.model.radial$fitted != train$genus)) / (nrow(train))
+}
+
+#--> Plot the cost vs. misclassification rate
+temp <- as.data.frame(cbind(cost_out, mis.radial))
+
+temp %>%
+  ggplot(aes(x=cost_out, y=mis)) +
+  geom_line() +
+  ylab("Percent of training observation misclassified") +
+  xlab("Cost parameter") +
+  ggtitle("Selecting the cost tuning parameter")
+
+print(cbind(cost_out, mis.radial))
+```
+The optimum cost parameter is a three-way tie between 3.1, 4.1, and 5.1. We'll use `c` = 5.1.
+
+(ii) Run the radial SVM model with these optimal parameters on the training data.
+
+```{r fit_radial}
+#--> (i) Fit model
+svm.model.radial <- svm(formula=genus~., data=select(train, genus, contains("shape")),
+                 kernel="radial", cost=cost_out[length(cost_out)], fold=5)
+summary(svm.model.radial$fitted)
+```
+
+
+(iii) Repeat part (d)(iii) but for the radial SVM model instead of the linear one.
+
+(Predict outcomes based on your model in (i) for the test data. Display a confusion matrix and compute sensitivity, specificity statistics. You may use the function demonstrated in class.)
+
+```{r confusion_radial}
+#--> (iii) Confusion matrix
+pred.radial <- predict(svm.model.radial, newdata=test)
+# confusionMatrix(test$genus, pred) # confusion matrix not included because it is 34 by 34
+library(caret)
+confusion <- confusionMatrix(test$genus, pred.radial)
+confusion
+```
+
+
+(iv) Discuss briefly your results in (e)(iii) as compared to (d)(iii) **using concepts discussed in class**.
+
+Our overall accuracy was slightly better for the linear kernel (51% accuracy) over the radial kernel (48.7%) when predicting for the test data. Because of the increasing complexitiy, radial kernel SVMs tend to overfit the training data, which we see here because we have a lower accuracy for the radial kernel. I would be curious to see what would have happened if we increased the `c` values for both radial and kernel SVMs because as discussed earlier, these observations have a lot of overlap. This makes it hard (if not impossible) to create a separating hyperplane if none of the training observations can be misclassified.
