@@ -1,0 +1,430 @@
+---
+title: "STOR 565 Spring 2019 Homework 3"
+author: "Coleman Breen"
+output:
+  html_document: default
+  pdf_document: default
+subtitle: \textbf{Due on 02/14/2018 in Class}
+header-includes: \usepackage{amsgen,amsmath,amstext,amsbsy,amsopn,amssymb,mathabx,amsthm,bm,bbm}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if(!require(ISLR)) { install.packages("ISLR", repos = "http://cran.us.r-project.org"); library(ISLR) }
+if(!require(leaps)) { install.packages("leaps", repos = "http://cran.us.r-project.org"); library(leaps) }
+if(!require(glmnet)) { install.packages("glmnet", repos = "http://cran.us.r-project.org"); library(glmnet) }
+if(!require(pls)) { install.packages("pls", repos = "http://cran.us.r-project.org"); library(pls) }
+library(tidyverse)
+```
+\theoremstyle{definition}
+\newtheorem*{hint}{Hint}
+
+\theoremstyle{remark}
+\newtheorem*{rmk}{Remark}
+
+*Remark.* This homework aims to help you further understand the model selection techniques in linear model. Credits for **Theoretical Part** and **Computational Part** are in total 100 pt. For **Computational Part** , please complete your answer in the **RMarkdown** file and summit your printed PDF homework created by it.
+
+## Computational Part
+
+**Hint.** Before starting your work, carefully read Textbook Chapter 6.5-6.7 (Lab 1-3). Mimic the related analyses you learn from it. Related packages have been loaded in setup.
+
+1. (Model Selection, Textbook 6.8, *18 pt*) In this exercise, we will generate simulated data, and will then use this data to perform model selection.
+
+(a) Use the `rnorm` function to generate a predictor $\bm{X}$ of length $n = 100$, as well as a noise vector $\bm{\epsilon}$ of length $n = 100$. Do not print the entire vector.
+```{r simulate_data}
+set.seed(919) # Raleigh 
+x <- rnorm(100)
+error <- rnorm(100)
+```
+    
+**Hint.** Before generating random numbers, fix your favourite random seed by `set.seed` so that your result is reproducible as you carry forward your exploration.
+
+(b) Generate a response vector $\bm{Y}$ of length $n = 100$ according to the model $$ Y = \beta_0 + \beta_1 X + \beta_2 X^2 + \beta_3 X^3 + \epsilon, $$ where $\beta_0 = 3$, $\beta_1 = 2$, $\beta_2 = -3$, $\beta_3 = 0.3$. Do not print the entire vector.
+```{r create_ground_truth}
+y <- 3 + 2*x - 3*(x^2) + .3*(x^3) + error
+head(y)
+```
+
+(c) Use the `regsubsets` function from `leaps` package to perform best subset selection in order to choose the best model containing the predictors $(X, X^2, \cdots, X^{10})$. 
+    
+What is the best model obtained according to $C_p$, BIC, and adjusted $R^2$? Show some plots to provide evidence for your answer, and report the coefficients of the best model obtained.
+    
+```{r best_subset}
+#--> Create a data frame with x, x^2, x^3,...
+data2 <- as.data.frame(cbind(y, x)) %>%
+  mutate(x2=x^2, x3=x^3, x4=x^4, x5=x^5, x6=x^6, x7=x^7, x8=x^8, x9=x^9, x10=x^10)
+
+#--> Plug in with nvmax=10
+regfit.full <- regsubsets(y~., data=data2, nvmax=10)
+regfit.summary <- summary(regfit.full)
+
+regfit.summary
+```
+
+```{r best_subset_plot}
+#--> Create plots function 
+plotFour <- function(summary) {
+  par(mfrow=c(2,2))
+  
+  plot(summary$rss, xlab="Number of variables", ylab="RSS", type="l")
+  points(which.min(summary$rss), summary$rss[which.min(summary$rss)], 
+         col="red", cex=2,pch=20)
+  
+  plot(summary$adjr2, xlab="Number of variables", ylab="Adjusted RSq", type="l")
+  points(which.max(summary$adjr2), summary$adjr2[which.max(summary$adjr2)], 
+         col="red", cex=2,pch=20)
+  
+  plot(summary$cp, xlab="Number of variables", ylab="Cp", type="l")
+  points(which.min(summary$cp), summary$cp[which.min(summary$cp)], 
+         col="red", cex=2,pch=20)
+  
+  plot(summary$bic, xlab="Number of variables", ylab="BIC", type="l")
+  points(which.min(summary$bic), summary$bic[which.min(summary$bic)], 
+         col="red", cex=2,pch=20)
+}
+
+#--> Plot
+plotFour(regfit.summary)
+
+#--> 3 variable model
+coef(regfit.full, 3)
+```
+
+
+We looked at four different metrics to test how many variables to include in our model. The first, $R^2$, predictably gives that 10 variables is the best model. As we know, $R^2$ by itself does not account for model complexity, so more variables will always be better because they include more degrees of freedom. Therefore, the other three metrics do a better job of helping us find a solid model. Adjusted $R^2$, $C_p$ and the Bayesian Information Criterion (BIC) all support that we should include 3 variables in our model.  
+
+In our model with 3 coefficients, we get $\hat{Y}$ = 3.11 + 2.01$X$ - 3.01$X^2$ + 0.32$X^3$ + $\epsilon$  
+
+Note that we do not need to split into train and test sets when doing best subset selection. 
+
+
+
+(d) Repeat (c), using forward stepwise selection and also using backwards stepwise selection. How does your answer compare to the results in (c)? You must show a summary of the selected model or other evidence to support your statements.
+    
+```{r forward_stepwise}
+#--> Plug in forward stepwise with nvmax=10
+fwdfit.full <- regsubsets(y~., data=data2, nvmax=10, method="forward")
+fwdfit.summary <- summary(fwdfit.full)
+
+fwdfit.summary
+```
+
+```{r forward_stepwise_plot}
+#--> Create plots to find which model is best
+plotFour(fwdfit.summary)
+
+coef(fwdfit.full, 3)
+```
+
+Like in the last method, forward stepwise selection shows that we should include 3 variables. We actually get the same coefficients as before because the optimum linear model is unique when there are more observations that there are predictors.
+
+In our model with 3 coefficients, we get (for the second time) $\hat{Y}$ = 3.11 + 2.01$X$ - 3.01$X^2$ + 0.32$X^3$ + $\epsilon$
+
+
+```{r backward_stepwise}
+#--> Plug in backward with nvmax=10
+backfit.full <- regsubsets(y~., data=data2, nvmax=10, method="backward")
+backfit.summary <- summary(backfit.full)
+
+backfit.summary
+```
+
+```{r backward_stepwise_plot}
+plotFour(backfit.summary)
+
+coef(backfit.full, 3)
+```
+
+The backward stepwise selection model creates some trouble. In its first round of pruning, it eliminates $X^3$ as a variable. Because these data are simulated, we know that $X^3$ is part of our "true"system, but this method cut it out early on. As a result, the three metrics that we're interested in (Adjusted $R^2$, $C_p$, and BIC) give different results. Adjusted $R^2$ wants us to use 6 variables whereas the other two want us to use 3. I'll use three variables in my final model because that's what the majority of the metrics suggest.
+
+The three variable model is  $\hat{Y}$ = 3.11 + 2.31$X$ - 2.98$X^2$ + 0.05$X^5$ + $\epsilon$ 
+
+
+(e) Now fit a LASSO model with `glmnet` function from `glmnet` package to the simulated data, again using $(X,X^2,\cdots,X^{10})$ as predictors. Use 5-fold cross-validation to select the optimal value of $\lambda$. Create plots of the cross-validation error as a function of $\lambda$. Report the resulting coefficient estimates, and discuss the results obtained.
+    
+```{r lasso}
+#--> Coerce data
+set.seed(919) # Represent
+train <- sample(c(T, F), nrow(data2), rep=T)
+test <- (!train)
+
+x <- as.matrix(select(data2, -y))
+y <- as.matrix(select(data2, y))
+
+#--> Cross validate for best lambda
+lasso.cv <- cv.glmnet(x[train, ], y[train, ], nfolds=5, alpha=1) # 1 for LASSO
+
+#--> Plot lambda vs MSE
+plot(lasso.cv)
+abline(v=log(lasso.cv$lambda.min), col="blue", lwd=2)
+
+#--> What is the best lambda?
+lasso.cv$lambda.min
+
+#--> What is our MSPE
+lasso.pred <- predict(lasso.cv, s=lasso.cv$lambda, newx=x[test, ])
+mean((lasso.pred - y[test])^2)
+
+#--> Fit model to whole data set
+full.lasso <- glmnet(x,y,alpha=1,lambda=lasso.cv$lambda.min)
+coef(full.lasso)
+
+```
+
+The choice of lambda in our LASSO regression that minimizes mean squared error in our 5-fold cross validation is $\lambda$ = 0.024.  
+
+The resulting model is $\hat{Y}$ = 3.09 + 2.02$X$ - 2.98$X^2$ + 0.0001$X^9$ + $\epsilon$ 
+
+(f) Now generate a response vector $Y$ according to the model $$Y = \beta_0 + \beta_7 X^7 + \epsilon,$$ where $\beta_7 = 7$, and perform best subset selection and the LASSO. Discuss the results obtained.
+    
+```{r 7x7}
+#--> Generate new y
+data3 <- data2 %>% 
+  mutate(y = 7*x7+3) 
+
+head(data3)
+```
+
+```{r best_subset_7x7}
+#--> Best subset selection
+regfit.full2 <- regsubsets(y~., data=data3, nvmax=10)
+regfit.sum2 <- summary(regfit.full2)
+
+regfit.sum2
+plotFour(regfit.sum2)
+
+print(list(c("With 5 predictors... ", coef(regfit.full2, 5))))
+print(list(c("With 1 predictor... ", coef(regfit.full2, 1))))
+
+```
+
+We are getting quite a bit of ambiguity by the best subset method alone. In our usual three metrics, we are seeing that we should include one (Adjusted $R^2$) or five (BIC and $C_p$) variables in our model. We'll look at the LASSO results before we make a decision.
+
+```{r lasso_7x7}
+set.seed(919) # Represent
+train <- sample(c(T, F), nrow(data3), rep=T)
+test <- (!train)
+
+x <- as.matrix(select(data3, -y))
+y <- as.matrix(select(data3, y))
+
+#--> Cross validate for best lambda
+lasso.cv <- cv.glmnet(x[train, ], y[train, ], nfolds=5, alpha=1) # 1 for LASSO
+
+#--> Plot lambda vs MSE
+plot(lasso.cv)
+abline(v=log(lasso.cv$lambda.min), col="blue", lwd=2)
+
+#--> What is the best lambda?
+lasso.cv$lambda.min
+
+#--> Fit model to whole data set
+full.lasso <- glmnet(x,y,alpha=1,lambda=lasso.cv$lambda.min)
+coef(full.lasso)
+```
+Recall that our "ground truth" is the model $Y$ = 3 + 7$X^7$. Now, out first round of testing, where we perform best subset selection, does not help us discern how many variables to include (one and five are both candidates). Five-fold cross validation gives the optimum $\lambda$ = 27.52 for our penalty term. Using that, we fit a model that includes one non-zero coefficient for our predictors. Our final LASSO model is $\hat{y}$ = 2.06 + 6.66$X^7$. Our final model from best subset selection with one predictor is $\hat{y}$ = 3 + 7$X^7$ (Wow!).  
+
+Note that I assumed $\beta_0=3$ as in the original setup. 
+    
+---
+    
+    
+2. (Prediction, *20 pt*) In this exercise, we will try to develop a prediction model for wins in a basketball season for a team based on a host of other factors. The starting point is to load the nba-teams-2017 data set (which was scraped by Gaston Sanchez at Berkeley). 
+
+(a) Do some exploratory data analysis by picking 6-7 features that you think might be interesting and explore relationship between these features by making a scatterplot matrix like the following (you **do not** have to use the same features I am using!):
+
+```{r nba}
+nba.data <- read.csv("nba-teams-2017.csv")
+
+head(nba.data)
+```
+
+*NOTE: You may remove the includegraphics statements below when knitting your own response, if they are giving you trouble*
+
+\includegraphics{rplot.jpg}
+
+\includegraphics{scatterplot.pdf}
+
+(b) The aim is now to predict *wins* based on the other features. First explain why you would remove the "losses" column from the above data set? Would you necessarily remove any other columns?  
+
+I am removing `losses` because it has a deterministic relationship with `wins` (`wins` = 82 - `losses`). I will remove `win_prop` for the same reason. In other words, we know these variables are not independent form one another.  
+
+The variables I will include are `field_goals`, `field_goals_attempted`, `points3`, `points3_attempted`, `rebounds`, `personal_fouls_drawn`, `steals`. My theory is that a team needs to be strong on offense by both shooting a lot and making a lot of their shots. It needs to get rebounds and steals to keep the other team from shooting. Finally, they can get more points and send the other players to the bench if they draw a lot of fouls (looking at you James Harden).
+
+```{r nba_corr, warning=FALSE, message=FALSE}
+#--> Create new data set
+nba.data2 <- nba.data %>%
+  transmute(wins=wins, fg=field_goals, fga=field_goals_attempted, 
+         threes=points3, threes_att=points3_attempted, reb=rebounds, 
+         fouls_drawn=personal_fouls_drawn, steals=steals)
+
+#--> Plot
+library(GGally)
+ggpairs(nba.data2, progress=FALSE)
+
+```
+
+
+(c) Use ridge regression with 5 fold cross-validation to choose the optimal tuning parameter and report your model along with your test error as found by cross-validation for that choice of $\lambda$. 
+
+```{r lm_nba, warning=FALSE}
+#--> Sampling
+set.seed(919)
+train=sample(1:nrow(nba.data2), nrow(nba.data2)/2)
+test=(-train)
+
+#--> Split data
+x=as.matrix(nba.data2[, -1])
+y=nba.data2$wins
+
+#--> Fit a linear model 
+lm.mod <- lm(wins~., data=nba.data2[train, ])
+lm.pred <- predict(lm.mod, nba.data2[test, ])
+print(list("...MSE...", mean((lm.pred - y[test])^2)))
+```
+
+```{r ridge_nba, warning=FALSE}
+
+#--> Optimal lambda
+cv.out <- cv.glmnet(x[train, ], y[train], alpha=0, nfolds=10) # 5 too small 
+bestlam <- cv.out$lambda.min
+
+plot(cv.out)
+
+#--> Output
+print(list("...Best lambda..", bestlam))
+
+#--> MSE on test
+ridge.mod <- glmnet(x[train, ], y[train], alpha=0, lambda=bestlam)
+ridge.pred <- predict(ridge.mod, s=bestlam, newx=x[test, ])
+print(list("...MSE...", mean((ridge.pred - y[test])^2)))
+
+#--> Refit model with properly selected lambda and full data set
+nba.mod <- glmnet(x, y, lambda=bestlam)
+predict(nba.mod, type="coefficients", s=bestlam)
+
+```
+
+As reported above, the best choice of tuning parameter for our ridge regression is $\lambda$=1.46. Our model is thus $\hat{Wins}$ = 19.31 + 2.95`fg` - 1.35`fga` + 1.62`threes` + 0.77`steals`. Note that attempted threes, rebounds, and fouls drawn are so near zero that they are not included. Despite using $\alpha$ = 0 (to use ridge regression) we still inadvertently end up dropping variables. See below for MSPE.   
+
+
+(d) Fit a LASSO model on the training set, with $\lambda$ chosen by 5-fold cross-validation. Report the test error obtained, along with the number of non-zero coefficient estimates.
+
+```{r lasso_nba, warning=FALSE}
+#--> Optimal lambda
+cv.out2 <- cv.glmnet(x[train, ], y[train], alpha=1, nfolds=10) # 5 too small 
+bestlam2 <- cv.out2$lambda.min
+
+plot(cv.out2)
+
+#--> Output
+print(list("...Best lambda...", bestlam2))
+
+#--> MSE on lasso
+lasso.mod <- glmnet(x[train, ], y[train], alpha=1, lambda=bestlam2)
+lasso.pred <- predict(lasso.mod, s=bestlam2, newx=x[test, ])
+print(list("...MSPE...", mean((lasso.pred - y[test])^2)))
+
+#--> Refit model with properly selected lambda
+nba.mod2 <- glmnet(x, y, lambda=bestlam2)
+predict(nba.mod2, type="coefficients", s=bestlam2)
+```
+
+As reported above, the best choice of tuning parameter for our LASSO regression is $\lambda$=0.016. Our model is thus $\hat{Wins}$ = 45.55 + 1.77`fg` - 3.16`fga` + 9.64`threes` - 2.64`threes_att` + 3.67`reb` - 1.32`fouls_drawn` + 5.37`steals`. The MSPE is 7.87 and we dropped eight variables. See below for MSPE.
+
+Out of curiosity, I fit an unpenalized/normal linear model in the code chunk called "lm_nba." The mean squared error is 228 for the standard linear model, 216 for LASSO, and 82 for Ridge regression. Therefore, ridge regression performs the best for these data. The model can be found above.
+
+---
+
+3. (Optional *12 pt*) Find a data set online (different from those in the book!). Put a link to where **we** can find this data set and describe why you were interested in this data set.  Carry out multivariate linear regression (as well as any general exploratory data analysis you think is relevant for example generating plots as in problem 2 (a)). Use subset selection as well as ridge regression and lasso to obtain models and interpret your results. Describe your findings to someone who might know no math or statistics. At the end of the day, you will have more fun if you find data that you truly care about!
+
+*This question is optional if you do some of the optional questions in the theory portion.*
+
+
+I would like to do further analysis on the data set I used for linear regression. 
+
+My sister Paige, a sage, sentinel, and soon-to-be-sommelier, is living in Belgium and playing [carrilon](https://en.wikipedia.org/wiki/Carillon). She even has a [blog](https://beerbellsandbelgium.com/) about it. While there, she has developed a taste for not only Belgian beer, but French wine (I personally feel you can only like one or the other). Her love of oenology is so deep that she aspires to work in wine tourism. To make her life easier, I would like to look at predictors of wine quality (i.e. alcohol content). Is there a way to predict, say, alcohol content if you know other measurements? I obtained this data from the [University of California at Irvine Machine Learning Data Collection](https://archive.ics.uci.edu/ml/datasets/Wine).
+
+
+```{r wine_data}
+#--> Read and add variable names
+wine <- read.csv("wine.data", header=FALSE)
+wine <- wine[, -1]
+names(wine) <- c("Alcohol", "MalicAcid", "Ash", "AlcalinityAsh", 
+                 "Magnesium", "TotalPhenols", "Flavanoids", 
+                 "NonflavPhenols", "Proanthocyanins", "ColorIntensity", 
+                 "Hue", "OD280", "Proline")
+
+head(wine)
+```
+
+```{r wine_subset}
+#--> Perform standard subset selection
+wine.full <- regsubsets(Alcohol~., data=wine, nvmax=12)
+wine.summary <- summary(regfit.full)
+
+#--> Tell us results
+wine.summary
+
+#--> Graph
+plotFour(wine.summary)
+
+#--> Coefficients for 3-variable model
+coef(wine.full, 3)
+```
+
+```{r wine_lasso}
+#--> Coerce data
+set.seed(919) # Represent
+train <- sample(c(T, F), nrow(wine), rep=T)
+test <- (!train)
+
+predictors <- as.matrix(select(wine, -Alcohol))
+alcohol <- as.matrix(select(wine, Alcohol))
+
+#--> Cross validate for best lambda
+wine.lasso.cv <- cv.glmnet(predictors[train, ], alcohol[train, ], nfolds=5, alpha=1) # 1 for LASSO
+
+#--> Plot lambda vs MSE
+plot(wine.lasso.cv)
+abline(v=log(wine.lasso.cv$lambda.min), col="blue", lwd=2)
+
+#--> What is the best lambda?
+wine.lasso.cv$lambda.min
+
+#--> What is our MSPE
+lasso.pred <- predict(wine.lasso.cv, s=wine.lasso.cv$lambda.min, newx=predictors[test, ])
+mean((lasso.pred - alcohol[test])^2)
+
+#--> Fit model to whole data set
+wine.full.lasso <- glmnet(x=predictors,y=alcohol,alpha=1,lambda=wine.lasso.cv$lambda.min)
+coef(wine.full.lasso)
+```
+
+```{r wine_ridge}
+#--> Cross validate for best lambda
+wine.ridge.cv <- cv.glmnet(predictors[train, ], alcohol[train, ], nfolds=5, alpha=0) # 0 for ridge
+
+#--> Plot lambda vs MSE
+plot(wine.ridge.cv)
+abline(v=log(wine.ridge.cv$lambda.min), col="blue", lwd=2)
+
+#--> What is the best lambda?
+wine.ridge.cv$lambda.min
+
+#--> What is our MSPE
+wine.pred <- predict(wine.ridge.cv, s=wine.ridge.cv$lambda.min, newx=predictors[test, ])
+mean((lasso.pred - alcohol[test])^2)
+
+#--> Fit model to whole data set
+wine.full.ridge <- glmnet(x=predictors,y=alcohol,alpha=0,lambda=wine.ridge.cv$lambda.min)
+coef(wine.full.ridge)
+```
+
+Paige, here's what we learned from this analysis. There are some interesting relationships between the measurements you collected and the alcohol content of your wine. To simplify this model, I'm going to stick with the LASSO regression model--this one is useful because it knocks out measurements which we don't necessarily need. There is a slighty positive relationship between Malic Acid, Total Phenols, Color Intensity, OD280, and Proline. So if there is an increase in one of those, we expect an increase in Alcohol Content. There is a negative relationship with Alcalinity Ash, so if Alcalinity Ash increases, we expect Alcohol Content to decrease. These are not hard and fast rules but general trends based on our assumptions.  
+
+We don't need to get into the nitty-gritty, but if you'd like to predict alcohol, I'd suggest plugging this formula into Excel:  
+
+$\hat{Alcohol}$ = 11.62 + 0.06`MalicAcid` - 0.02`AlcalinityAsh` + 0.02`TotalPhenols` + 0.12`ColorIntensity` + 0.04`OD280` + 0.001`Proline`
+
+
