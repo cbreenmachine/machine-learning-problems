@@ -1,2 +1,2 @@
 # machine_learning_in_R
-Basic machine learning algorithms implemented. Assignments and projects from STOR 565--UNC's Machine Learning course. Code 
+This repository contains the R code used in Professor Bhamidi's Machine Learning class (STOR 565 - Fall 2019) at UNC-Chapel Hill. We covered regression, classification, and clustering. Our final project was an implementation of neural networks and random forests to perform facial recognition/classification tasks.
